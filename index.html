@@ -49,7 +49,7 @@ main{flex:1;margin-top:-40px;position:relative;z-index:1}
 .fld{margin-bottom:10px;min-width:0}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 label{display:block;font-size:13px;font-weight:600;color:var(--muted);margin-bottom:4px}
-select,input[type=email],input[type=password],input[type=text]{width:100%;padding:12px 14px;border-radius:12px;border:1.5px solid var(--line);background:var(--soft);color:var(--ink);font:inherit;font-size:16px;transition:border-color .15s,box-shadow .15s}
+select,input[type=email],input[type=password],input[type=text],input[type=date]{width:100%;padding:12px 14px;border-radius:12px;border:1.5px solid var(--line);background:var(--soft);color:var(--ink);font:inherit;font-size:16px;transition:border-color .15s,box-shadow .15s}
 select{appearance:none;-webkit-appearance:none;padding-left:40px;
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='9' viewBox='0 0 14 9'%3E%3Cpath d='M1 1.5l6 6 6-6' fill='none' stroke='%23E89D29' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   background-repeat:no-repeat;background-position:left 14px center}
@@ -97,6 +97,21 @@ button.ghost:hover{background:var(--soft)}
 .box{display:flex;flex-direction:column;gap:2px;background:var(--soft);border-radius:12px;padding:10px 12px;font-size:13px;color:var(--muted);margin-top:6px}
 .msg.err{color:var(--err)}
 .msg.ok{color:var(--accent);font-weight:700}
+
+/* لوحة الموظفين */
+dialog.wide{width:min(96vw,760px);max-height:92vh;overflow:auto}
+.phead{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+#pdlg .sh{height:46px;margin:0}
+#pdlg h3{text-align:right}
+#pdlg p{text-align:right;margin:0}
+button.gold{background:var(--gold);color:#3b2603}
+button.gold:hover{background:#d18b1c}
+button:disabled{opacity:.55;cursor:not-allowed}
+.tw{overflow:auto;max-height:40vh;margin-top:10px;border:1px solid var(--line);border-radius:12px}
+.tw table{border-collapse:collapse;width:100%;font-size:12.5px;direction:rtl}
+.tw th{position:sticky;top:0;background:var(--soft);color:var(--muted);text-align:right;padding:7px 9px;white-space:nowrap;font-weight:700}
+.tw td{padding:6px 9px;border-top:1px solid var(--line);white-space:nowrap;unicode-bidi:plaintext}
+.tw:empty,.tw:has(table:empty){display:none}
 
 /* الفوتر */
 footer{text-align:center;padding:22px 16px calc(env(safe-area-inset-bottom) + 22px);font-size:12px;color:var(--muted)}
@@ -150,7 +165,7 @@ dialog label{margin-top:12px}
 <footer>
   <a href="#" class="staff" id="staffLink">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/></svg>
-    دخول الموظفين
+    <span id="staffLabel">دخول الموظفين</span>
   </a>
   <div>Academic Attendance · Faculty of Medicine, Delta University</div>
 </footer>
@@ -184,6 +199,18 @@ dialog label{margin-top:12px}
     <button id="cGo">سجّل الحضور</button>
     <button class="ghost" id="cClose" type="button">إغلاق</button>
   </div>
+</dialog>
+
+<dialog id="pdlg" class="wide">
+  <div class="phead"><img class="sh" id="pSh" alt=""><div><h3>لوحة الموظفين</h3><p id="pWho"></p></div></div>
+  <div class="grid2">
+    <div class="fld"><label for="pFrom">من تاريخ</label><input type="date" id="pFrom" dir="ltr"></div>
+    <div class="fld"><label for="pTo">إلى تاريخ</label><input type="date" id="pTo" dir="ltr"></div>
+  </div>
+  <div class="row"><button id="pShow">عرض الحضور</button><button id="pCsv" class="gold" disabled>تنزيل CSV</button></div>
+  <div id="pInfo" class="msg" role="status"></div>
+  <div class="tw"><table id="pTable"></table></div>
+  <div class="row"><button class="ghost" id="pClose" type="button">إغلاق</button><button class="ghost" id="pOut" type="button">تسجيل الخروج</button></div>
 </dialog>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -334,17 +361,99 @@ pastEl.addEventListener("change",render);
 const STAFF_DOMAIN = "staff.attendance.app";
 const staffEmail = u => { u=u.trim().toLowerCase(); return u.includes("@") ? u : u+"@"+STAFF_DOMAIN; };
 const dlg=$("dlg"), loginMsg=$("loginMsg");
-$("staffLink").addEventListener("click",e=>{ e.preventDefault(); loginMsg.textContent=""; dlg.showModal(); });
+const STAFF_ROLES={lab_secretary:"أمينة معمل",admin:"إدارة",super_admin:"مدير رئيسي"};
+async function currentStaff(){
+  if(!sb) return null;
+  try{
+    const {data:{session}}=await sb.auth.getSession(); if(!session) return null;
+    const {data:p}=await sb.from("profiles").select("role,full_name").eq("id",session.user.id).single();
+    if(!p||!STAFF_ROLES[p.role]) return null;
+    return {role:p.role, name:(session.user.email||"").split("@")[0]};
+  }catch(e){ return null; }
+}
+$("staffLink").addEventListener("click",async e=>{
+  e.preventDefault();
+  const st=await currentStaff();
+  if(st){ openPanel(st); return; }
+  loginMsg.textContent=""; dlg.showModal();
+});
 $("closeBtn").addEventListener("click",()=>dlg.close());
 $("loginBtn").addEventListener("click",async()=>{
-  if(!configured){ loginMsg.textContent="لازم تربط Supabase الأول."; return; }
+  if(!sb){ loginMsg.textContent="الاتصال بقاعدة البيانات مش متاح دلوقتي. جرّب تاني."; return; }
   loginMsg.textContent="جاري الدخول...";
-  const {data,error} = await sb.auth.signInWithPassword({email:staffEmail($("em").value),password:$("pw").value});
-  if(error){ loginMsg.textContent="الإيميل أو كلمة المرور غلط."; return; }
-  const {data:p} = await sb.from("profiles").select("role,full_name").eq("id",data.user.id).single();
-  const roles={student:"طالب",lab_secretary:"أمينة معمل",admin:"إدارة",super_admin:"مدير رئيسي"};
-  loginMsg.textContent=`تم الدخول كـ ${roles[p?.role]||"مستخدم"}. لوحة التحكم هتتضاف في المرحلة الجاية.`;
+  const {error} = await sb.auth.signInWithPassword({email:staffEmail($("em").value),password:$("pw").value});
+  if(error){ loginMsg.textContent="اسم المستخدم أو كلمة المرور غلط."; return; }
+  $("pw").value="";
+  const st=await currentStaff();
+  if(!st){ await sb.auth.signOut(); loginMsg.textContent="الحساب ده مش مسموح له بلوحة الموظفين."; return; }
+  dlg.close(); $("staffLabel").textContent="لوحة الموظفين"; openPanel(st);
 });
+
+/* ---------- لوحة الموظفين: عرض الحضور وتنزيله ---------- */
+const pdlg=$("pdlg"); let reportRows=[];
+$("pSh").src = document.querySelector("#dlg .sh").src;
+function weekRange(){            // الأسبوع عندنا بيبدأ السبت
+  const d=new Date(), back=(d.getDay()+1)%7, s=new Date(d); s.setDate(d.getDate()-back);
+  const e=new Date(s); e.setDate(s.getDate()+6); return [iso(s),iso(e)];
+}
+function openPanel(st){
+  $("pWho").textContent=`${st.name} · ${STAFF_ROLES[st.role]}`;
+  const [f,t]=weekRange(); $("pFrom").value=f; $("pTo").value=t;
+  $("pInfo").textContent="اختار الفترة واضغط عرض الحضور."; $("pInfo").className="msg";
+  $("pTable").replaceChildren(); reportRows=[]; $("pCsv").disabled=true; pdlg.showModal();
+}
+async function fetchReport(from,to){
+  const all=[], step=1000;
+  for(let i=0;;i+=step){
+    const {data,error}=await sb.rpc("attendance_report",{p_from:from,p_to:to}).range(i,i+step-1);
+    if(error) throw error;
+    all.push(...data); if(data.length<step) break;
+  }
+  return all;
+}
+const cairoTime = s => { try{ return new Date(s).toLocaleString("sv-SE",{timeZone:"Africa/Cairo"}); }catch(e){ return s; } };
+function renderReport(){
+  const t=$("pTable"); t.replaceChildren();
+  const stu=new Set(reportRows.map(r=>r.university_id));
+  const ses=new Set(reportRows.map(r=>[r.session_date,r.start_time,r.semester,r.module,r.discipline,r.topic,r.targets].join("|")));
+  if(!reportRows.length){ $("pInfo").textContent="مفيش تسجيلات حضور في الفترة دي."; $("pCsv").disabled=true; return; }
+  const shown=Math.min(reportRows.length,100);
+  $("pInfo").textContent=`${reportRows.length} تسجيل · ${stu.size} طالب · ${ses.size} جلسة`+(reportRows.length>shown?` (معروض أول ${shown}، والملف فيه الكل)`:"");
+  const head=mk("tr"); ["التاريخ","الوقت","السمستر","الموديول","الطالب","الرقم الجامعي","الجروب"].forEach(x=>head.append(mk("th","",x))); t.append(head);
+  reportRows.slice(0,shown).forEach(r=>{
+    const tr=mk("tr");
+    [r.session_date, r.start_time.slice(0,5), r.semester, r.module+(r.discipline?" · "+r.discipline:""), r.student_name, r.university_id,
+     [r.student_group,r.student_subgroup].filter(Boolean).join(" / ")].forEach(x=>tr.append(mk("td","",x))); t.append(tr);
+  });
+  $("pCsv").disabled=false;
+}
+$("pShow").addEventListener("click",async()=>{
+  const from=$("pFrom").value, to=$("pTo").value;
+  if(!from||!to||from>to){ $("pInfo").textContent="اختار فترة صحيحة."; return; }
+  $("pInfo").textContent="بنحمّل..."; $("pShow").disabled=true;
+  try{ reportRows=await fetchReport(from,to); renderReport(); }
+  catch(e){ console.error(e); reportRows=[]; $("pCsv").disabled=true; $("pTable").replaceChildren();
+    $("pInfo").textContent="مقدرناش نحمّل التقرير. اتأكد إنك مسجّل دخول بحساب موظف وجرّب تاني."; }
+  $("pShow").disabled=false;
+});
+const csvCell = v => {
+  v=String(v??"");
+  if(/^[=+\-@\t\r]/.test(v)) v="'"+v;               // يمنع تنفيذ معادلات Excel من أسماء الطلبة
+  return /[",\n\r]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v;
+};
+$("pCsv").addEventListener("click",()=>{
+  if(!reportRows.length) return;
+  const cols=["session_date","start_time","end_time","semester","session_type","module","module_code","discipline","topic","targets",
+              "university_id","student_name","student_group","student_subgroup","registered_at","distance_m"];
+  const lines=[cols.join(",")];
+  reportRows.forEach(r=>lines.push(cols.map(c=>csvCell(c==="registered_at"?cairoTime(r[c]):r[c])).join(",")));
+  const blob=new Blob(["﻿"+lines.join("\r\n")],{type:"text/csv;charset=utf-8"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob);
+  a.download=`attendance_${$("pFrom").value}_${$("pTo").value}.csv`;
+  document.body.append(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),3000);
+});
+$("pClose").addEventListener("click",()=>pdlg.close());
+$("pOut").addEventListener("click",async()=>{ try{ await sb.auth.signOut(); }catch(e){} $("staffLabel").textContent="دخول الموظفين"; pdlg.close(); });
 
 /* ---------- تسجيل الحضور ---------- */
 const CFG = { open_before_min:10, close_after_min:15 };
@@ -434,6 +543,7 @@ $("cGo").addEventListener("click",async()=>{
 (async function init(){
   if(!configured) $("demoNote").hidden=false;
   await loadSettings();
+  currentStaff().then(st=>{ if(st) $("staffLabel").textContent="لوحة الموظفين"; });
   try{
     fill(semEl, await getSemesters(), "اختر السمستر");
     const s=load();
